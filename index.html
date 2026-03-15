@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>動画ピッチ変更ツール（AudioWorklet版）</title>
+  <title>動画ピッチ変更ツール（AudioWorklet版・修正）</title>
   <style>
     body { font-family: sans-serif; background:#111; color:#eee; padding:20px; }
     .container { max-width:800px; margin:auto; background:#1a1a2e; padding:20px; border-radius:12px; }
@@ -10,58 +10,67 @@
     .controls { margin:20px 0; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
     button { padding:10px 18px; background:#4169e1; color:white; border:none; border-radius:6px; cursor:pointer; }
     button:disabled { background:#444; }
+    #status { color: #ffcc00; min-height: 1.5em; }
   </style>
 </head>
 <body>
 
 <div class="container">
-  <h1>動画の音の高さ変更（ブラウザのみ）</h1>
+  <h1>動画の音の高さ変更ツール</h1>
   <input type="file" id="videoFile" accept="video/*" />
   
   <div class="controls">
     <label>ピッチ ×<span id="pitchVal">1.0</span></label>
-    <input type="range" id="pitch" min="0.5" max="2.0" step="0.05" value="1.0" />
+    <input type="range" id="pitch" min="0.5" max="2.0" step="0.01" value="1.0" />
     <button id="playBtn" disabled>再生</button>
     <button id="stopBtn" disabled>停止</button>
   </div>
   
-  <div id="status">動画を選択してください</div>
+  <div id="status">動画を選択してください…</div>
   <video id="video" controls></video>
 </div>
 
-<!-- 最新のSoundTouchJS AudioWorklet版 -->
 <script type="module">
 import { SoundTouchNode } from 'https://cdn.jsdelivr.net/npm/@soundtouchjs/audio-worklet@1.0.7/+esm';
 
-const videoFile = document.getElementById('videoFile');
-const video = document.getElementById('video');
+const videoFile   = document.getElementById('videoFile');
+const video       = document.getElementById('video');
 const pitchSlider = document.getElementById('pitch');
-const pitchVal = document.getElementById('pitchVal');
-const playBtn = document.getElementById('playBtn');
-const stopBtn = document.getElementById('stopBtn');
-const status = document.getElementById('status');
+const pitchVal    = document.getElementById('pitchVal');
+const playBtn     = document.getElementById('playBtn');
+const stopBtn     = document.getElementById('stopBtn');
+const status      = document.getElementById('status');
 
 let audioCtx = null;
 let soundTouchNode = null;
-let source = null;
-let mediaElementSource = null;
+let mediaSource = null;
 
 async function initAudio() {
   if (audioCtx) return;
+  
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   
-  // AudioWorkletを登録（CDNから直接）
-  await audioCtx.audioWorklet.addModule(
-    'https://cdn.jsdelivr.net/npm/@soundtouchjs/audio-worklet@1.0.7/processor.min.js'
-  );
+  try {
+    // 最新版のprocessorパス（min.jsではなくこれを使う）
+    const processorUrl = 'https://cdn.jsdelivr.net/npm/@soundtouchjs/audio-worklet@1.0.7/processor';
+    
+    console.log('Loading worklet from:', processorUrl);
+    await audioCtx.audioWorklet.addModule(processorUrl);
+    status.textContent = 'AudioWorklet 登録完了';
+  } catch (err) {
+    status.textContent = 'Worklet読み込み失敗: ' + err.message;
+    console.error('addModule error:', err);
+    throw err;
+  }
 }
 
-videoFile.onchange = async e => {
+videoFile.onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  status.textContent = "読み込み中...";
+  status.textContent = '読み込み中...';
   playBtn.disabled = true;
+  stopBtn.disabled = true;
 
   const url = URL.createObjectURL(file);
   video.src = url;
@@ -69,40 +78,36 @@ videoFile.onchange = async e => {
   try {
     await initAudio();
 
-    // 一度再生してAudioを準備（iOSなど必須）
-    await video.play().catch(()=>{});
+    // 初回playでAudioContextをresume（モバイル必須）
+    video.muted = true;
+    await video.play();
     video.pause();
     video.currentTime = 0;
+    video.muted = false;
 
-    // MediaElementSourceでvideoの音を取る
-    mediaElementSource = audioCtx.createMediaElementSource(video);
+    mediaSource = audioCtx.createMediaElementSource(video);
 
-    // SoundTouchNodeを作成
     soundTouchNode = new SoundTouchNode(audioCtx);
-    soundTouchNode.pitch = 1.0;          // 初期値
-    // soundTouchNode.tempo = 1.0;       // 必要なら
+    soundTouchNode.pitch = 1.0;
 
-    mediaElementSource.connect(soundTouchNode);
-    soundTouchNode.connect(audioCtx.destination);
+    mediaSource.connect(soundTouchNode).connect(audioCtx.destination);
 
-    status.textContent = "準備完了！ ピッチを調整して再生してください";
+    status.textContent = '準備OK！ ピッチを調整して再生してください';
     playBtn.disabled = false;
-  } catch(err) {
-    status.textContent = "エラー: " + err.message;
+  } catch (err) {
+    status.textContent = 'エラー: ' + err.message;
     console.error(err);
   }
 };
 
 pitchSlider.oninput = () => {
-  const val = Number(pitchSlider.value);
+  const val = parseFloat(pitchSlider.value);
   pitchVal.textContent = val.toFixed(2);
-  if (soundTouchNode) {
-    soundTouchNode.pitch = val;
-  }
+  if (soundTouchNode) soundTouchNode.pitch = val;
 };
 
 playBtn.onclick = async () => {
-  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  if (audioCtx?.state === 'suspended') await audioCtx.resume();
   video.play();
   stopBtn.disabled = false;
 };
