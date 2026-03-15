@@ -1,252 +1,120 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ピッチ変更ツール（動画・音声対応）</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0d1117;
-      color: #c9d1d9;
-      margin: 0;
-      padding: 20px;
-      line-height: 1.6;
-    }
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: #161b22;
-      padding: 24px;
-      border-radius: 12px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    }
-    h1 {
-      color: #58a6ff;
-      margin-top: 0;
-    }
-    input[type="file"] {
-      margin: 16px 0;
-      display: block;
-    }
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      align-items: center;
-      margin: 20px 0;
-    }
-    label {
-      font-size: 1.1rem;
-      min-width: 140px;
-    }
-    input[type="range"] {
-      flex: 1;
-      min-width: 200px;
-      accent-color: #1f6feb;
-    }
-    button {
-      padding: 10px 20px;
-      font-size: 1rem;
-      background: #238636;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    button:hover:not(:disabled) {
-      background: #2ea043;
-    }
-    button:disabled {
-      background: #30363d;
-      cursor: not-allowed;
-    }
-    #status {
-      color: #f0883e;
-      font-weight: bold;
-      min-height: 1.4em;
-      margin: 12px 0;
-    }
-    video, audio {
-      width: 100%;
-      max-height: 500px;
-      background: black;
-      border-radius: 8px;
-      margin-top: 16px;
-    }
-    .note {
-      font-size: 0.9rem;
-      color: #8b949e;
-      margin-top: 24px;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pitch Changer & Downloader</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #f4f4f9; }
+        .container { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; width: 100%; }
+        video { width: 100%; margin-top: 10px; background: #000; border-radius: 5px; }
+        .controls { margin-top: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .row { display: flex; align-items: center; justify-content: space-between; }
+        button { cursor: pointer; padding: 10px; border: none; border-radius: 5px; background: #007bff; color: white; transition: 0.3s; }
+        button:disabled { background: #ccc; }
+        button:hover:not(:disabled) { background: #0056b3; }
+        #downloadBtn { background: #28a745; }
+    </style>
 </head>
 <body>
 
 <div class="container">
-  <h1>動画・音声のピッチ（音の高さ）変更ツール</h1>
-  
-  <input type="file" id="mediaFile" accept="video/*,audio/*">
-  
-  <div class="controls">
-    <label>ピッチ × <span id="pitchDisplay">1.00</span></label>
-    <input type="range" id="pitchSlider" min="0.5" max="2.0" step="0.01" value="1.00">
-    <button id="playButton" disabled>再生</button>
-    <button id="pauseButton" disabled>一時停止</button>
-  </div>
+    <h2>ピッチ調整 & ダウンロード</h2>
+    
+    <input type="file" id="fileInput" accept="video/*,audio/*">
+    
+    <video id="mediaPlayer" controls></video>
 
-  <div id="status">ファイルを選択してください…</div>
+    <div class="controls">
+        <div class="row">
+            <label for="pitchRange">ピッチ (速度): <span id="pitchValue">1.0</span>x</label>
+            <input type="range" id="pitchRange" min="0.5" max="2.0" step="0.05" value="1.0">
+        </div>
 
-  <video id="videoPlayer" controls></video>
-  <audio id="audioPlayer" controls style="display:none;"></audio>
+        <div class="row">
+            <button id="recordBtn" disabled>録音開始 (再生しながら録音)</button>
+            <button id="stopBtn" disabled>停止</button>
+        </div>
+
+        <button id="downloadBtn" style="display: none;">加工済みファイルをダウンロード</button>
+    </div>
 </div>
-
-<div class="note">
-  ※ ブラウザだけで完結（アップロード不要）<br>
-  ※ ピッチ変更はリアルタイム処理です。長時間ファイルは重くなる可能性あり<br>
-  ※ iPad/Safari含め主要ブラウザで動作確認を優先しています
-</div>
-
-<!-- SoundTouchJS (cutterbl版 - 比較的安定) -->
-<script src="https://cdn.jsdelivr.net/npm/@soundtouchjs/core@latest/dist/soundtouch.min.js"></script>
 
 <script>
-// 要素取得
-const fileInput     = document.getElementById('mediaFile');
-const videoPlayer   = document.getElementById('videoPlayer');
-const audioPlayer   = document.getElementById('audioPlayer');
-const pitchSlider   = document.getElementById('pitchSlider');
-const pitchDisplay  = document.getElementById('pitchDisplay');
-const playButton    = document.getElementById('playButton');
-const pauseButton   = document.getElementById('pauseButton');
-const status        = document.getElementById('status');
+    const fileInput = document.getElementById('fileInput');
+    const mediaPlayer = document.getElementById('mediaPlayer');
+    const pitchRange = document.getElementById('pitchRange');
+    const pitchValue = document.getElementById('pitchValue');
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
 
-let audioContext    = null;
-let mediaElement    = null;        // video または audio
-let mediaSource     = null;
-let scriptNode      = null;
-let soundTouch      = null;
-let isPitchActive   = false;
+    let audioCtx, source, streamDest, mediaRecorder, chunks = [];
 
-// AudioContext初期化（ユーザーインタラクション後）
-async function initAudioContext() {
-  if (audioContext) return;
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  if (audioContext.state === 'suspended') {
-    await audioContext.resume();
-  }
-}
-
-// ファイル読み込み処理
-fileInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  status.textContent = '読み込み中...';
-  playButton.disabled = true;
-  pauseButton.disabled = true;
-
-  const url = URL.createObjectURL(file);
-  
-  // 動画か音声か判定
-  const isVideo = file.type.startsWith('video/');
-  mediaElement = isVideo ? videoPlayer : audioPlayer;
-  
-  if (isVideo) {
-    videoPlayer.style.display = 'block';
-    audioPlayer.style.display = 'none';
-  } else {
-    videoPlayer.style.display = 'none';
-    audioPlayer.style.display = 'block';
-  }
-
-  mediaElement.src = url;
-  mediaElement.load();
-
-  try {
-    await initAudioContext();
-
-    // SoundTouch初期化
-    soundTouch = new SoundTouch();
-    soundTouch.setSampleRate(44100);  // 標準サンプルレート（後で調整可）
-    soundTouch.setChannels(2);        // ステレオ想定
-    soundTouch.setTempo(1.0);         // 速度はそのまま
-    soundTouch.setPitch(1.0);         // 初期ピッチ
-
-    // ScriptProcessorNode作成（バッファサイズ4096でバランス）
-    scriptNode = audioContext.createScriptProcessor(4096, 2, 2);
-    scriptNode.onaudioprocess = (e) => {
-      if (!soundTouch || !isPitchActive) {
-        // ピッチオフ時はバイパス（入力→出力そのまま）
-        for (let ch = 0; ch < 2; ch++) {
-          const input = e.inputBuffer.getChannelData(ch);
-          const output = e.outputBuffer.getChannelData(ch);
-          output.set(input);
+    // ファイル読み込み
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const url = URL.createObjectURL(file);
+            mediaPlayer.src = url;
+            recordBtn.disabled = false;
+            downloadBtn.style.display = 'none';
         }
-        return;
-      }
+    });
 
-      const inputL = e.inputBuffer.getChannelData(0);
-      const inputR = e.inputBuffer.getChannelData(1);
-      const outputL = e.outputBuffer.getChannelData(0);
-      const outputR = e.outputBuffer.getChannelData(1);
+    // ピッチ調整 (再生速度を変更)
+    pitchRange.addEventListener('input', (e) => {
+        const val = e.target.value;
+        pitchValue.textContent = val;
+        mediaPlayer.playbackRate = val;
+        // ブラウザの「ピッチ維持機能」をオフにする（音程を変化させるため）
+        mediaPlayer.preservesPitch = false; 
+    });
 
-      soundTouch.putSamples(inputL, inputL.length);
-      let n = 0;
-      while (n < outputL.length) {
-        const extracted = soundTouch.receiveSamples(outputL.subarray(n), outputL.length - n);
-        soundTouch.receiveSamples(outputR.subarray(n), outputR.length - n);
-        n += extracted;
-      }
-    };
+    // 録音ロジック
+    recordBtn.addEventListener('click', () => {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            source = audioCtx.createMediaElementSource(mediaPlayer);
+            streamDest = audioCtx.createMediaStreamDestination();
+            
+            // 音をスピーカーと録音用の両方に流す
+            source.connect(streamDest);
+            source.connect(audioCtx.destination);
+        }
 
-    // 接続
-    mediaSource = audioContext.createMediaElementSource(mediaElement);
-    mediaSource.connect(scriptNode);
-    scriptNode.connect(audioContext.destination);
+        chunks = [];
+        mediaRecorder = new MediaRecorder(streamDest.stream);
+        
+        mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(chunks, { type: 'audio/webm' }); // WebM形式で保存
+            const url = URL.createObjectURL(blob);
+            downloadBtn.href = url;
+            downloadBtn.download = `processed_pitch_${pitchRange.value}.webm`;
+            downloadBtn.style.display = 'block';
+            downloadBtn.onclick = () => {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `output.webm`;
+                a.click();
+            };
+        };
 
-    status.textContent = '準備完了！ 再生ボタンを押してください';
-    playButton.disabled = false;
-  } catch (err) {
-    status.textContent = `エラー: ${err.message}`;
-    console.error(err);
-  }
-});
+        mediaRecorder.start();
+        mediaPlayer.play();
+        
+        recordBtn.disabled = true;
+        stopBtn.disabled = false;
+    });
 
-// ピッチスライダー
-pitchSlider.addEventListener('input', () => {
-  const pitch = parseFloat(pitchSlider.value);
-  pitchDisplay.textContent = pitch.toFixed(2);
-
-  if (soundTouch) {
-    soundTouch.setPitch(pitch);
-  }
-});
-
-// 再生・一時停止
-playButton.addEventListener('click', async () => {
-  if (audioContext.state === 'suspended') {
-    await audioContext.resume();
-  }
-  isPitchActive = true;
-  mediaElement.play().catch(err => {
-    status.textContent = '再生エラー: ' + err.message;
-  });
-  pauseButton.disabled = false;
-});
-
-pauseButton.addEventListener('click', () => {
-  mediaElement.pause();
-  pauseButton.disabled = true;
-});
-
-// メディア終了時にリセット
-[videoPlayer, audioPlayer].forEach(el => {
-  el.addEventListener('ended', () => {
-    pauseButton.disabled = true;
-  });
-});
-
+    stopBtn.addEventListener('click', () => {
+        mediaRecorder.stop();
+        mediaPlayer.pause();
+        recordBtn.disabled = false;
+        stopBtn.disabled = true;
+    });
 </script>
+
 </body>
-</html>ー
+</html>
