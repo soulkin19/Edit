@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>動画ピッチ変更ツール（ブラウザだけで動く）</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f1a;
+      color: #e0e0ff;
+      padding: 20px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 { color: #a8d0ff; }
+    .container {
+      background: #1a1a2e;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    video {
+      width: 100%;
+      max-height: 500px;
+      background: black;
+      border-radius: 8px;
+      margin: 16px 0;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      margin: 20px 0;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 1.1rem;
+      background: #4a6bff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover { background: #5a7aff; }
+    button:disabled { background: #444; cursor: not-allowed; }
+    label { font-size: 1.1rem; }
+    input[type="range"] {
+      width: 180px;
+      accent-color: #7a9aff;
+    }
+    #status {
+      color: #ffcc66;
+      min-height: 1.4em;
+    }
+    .info {
+      font-size: 0.9rem;
+      color: #a0a0c0;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>動画の音の高さ（ピッチ）を変えるツール</h1>
+
+  <input type="file" id="videoFile" accept="video/*" />
+
+  <div class="controls">
+    <label>ピッチ（音の高さ）：× 
+      <span id="pitchValue">1.0</span> 倍
+    </label>
+    <input type="range" id="pitchSlider" min="0.5" max="2.0" step="0.05" value="1.0" />
+
+    <button id="btnPlay" disabled>再生</button>
+    <button id="btnStop" disabled>停止</button>
+  </div>
+
+  <div id="status">動画を選択してください...</div>
+
+  <video id="preview" controls></video>
+</div>
+
+<div class="info">
+  ※ 現在はブラウザのメモリ上で処理しています。長すぎる動画（10分以上など）は重くなる可能性があります。<br>
+  ※ ピッチ変更はSoundTouch.jsによるリアルタイム処理です（品質はそこそこです）。
+</div>
+
+<!-- SoundTouch.js (ピッチ変更ライブラリ) -->
+<script src="https://cdn.jsdelivr.net/npm/soundtouchjs@0.1.8/soundtouch.min.js"></script>
+
+<script>
+// ────────────────────────────────────────────────
+const videoFileInput = document.getElementById('videoFile');
+const videoEl        = document.getElementById('preview');
+const pitchSlider    = document.getElementById('pitchSlider');
+const pitchValueSpan = document.getElementById('pitchValue');
+const btnPlay        = document.getElementById('btnPlay');
+const btnStop        = document.getElementById('btnStop');
+const status         = document.getElementById('status');
+
+let audioContext = null;
+let sourceNode   = null;
+let soundTouch   = null;
+let pitchShifter = null;
+let currentPitch = 1.0;
+let isProcessing = false;
+
+// ────────────────────────────────────────────────
+videoFileInput.addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  status.textContent = "読み込み中...";
+  btnPlay.disabled = true;
+  btnStop.disabled = true;
+
+  // まず普通にvideoタグで再生できるURLを作る
+  const url = URL.createObjectURL(file);
+  videoEl.src = url;
+  videoEl.load();
+
+  try {
+    await setupAudioProcessing(file);
+    status.textContent = "準備完了！ 再生ボタンを押してください";
+    btnPlay.disabled = false;
+  } catch(err) {
+    status.textContent = "エラー: " + err.message;
+    console.error(err);
+  }
+});
+
+// ────────────────────────────────────────────────
+async function setupAudioProcessing(file) {
+  if (audioContext) {
+    await audioContext.close();
+    audioContext = null;
+  }
+
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+  // 元の音声をデコード
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+  // SoundTouch初期化
+  soundTouch = new SoundTouch();
+  soundTouch.setSampleRate(audioBuffer.sampleRate);
+  soundTouch.setChannels(audioBuffer.numberOfChannels);
+  soundTouch.setTempo(1.0);           // テンポは変えない
+  soundTouch.setPitchSemiTones(0);    // 最初は変更なし
+
+  // 簡易ピッチシフター（SoundTouch + ScriptProcessorNode）
+  pitchShifter = audioContext.createScriptProcessor(4096, audioBuffer.numberOfChannels, audioBuffer.numberOfChannels);
+  pitchShifter.onaudioprocess = (e) => {
+    if (!soundTouch || isProcessing) return;
+    isProcessing = true;
+
+    const input = e.inputBuffer.getChannelData(0); // とりあえずモノラル想定で簡略化
+    const output = e.outputBuffer.getChannelData(0);
+
+    // SoundTouchにデータを投入
+    soundTouch.putSamples(input, input.length);
+
+    // 取り出す
+    let samplesExtracted = soundTouch.receiveSamples(output, output.length);
+
+    // 足りなかったらゼロ埋め
+    for (let i = samplesExtracted; i < output.length; i++) {
+      output[i] = 0;
+    }
+
+    isProcessing = false;
+  };
+
+  // ピッチスライダー連動
+  pitchSlider.addEventListener('input', () => {
+    currentPitch = Number(pitchSlider.value);
+    pitchValueSpan.textContent = currentPitch.toFixed(2);
+
+    // SoundTouchはセミトーン単位なので変換
+    const semitones = 12 * Math.log2(currentPitch);
+    soundTouch.setPitchSemiTones(semitones);
+  });
+
+  // 再生開始時に接続
+  btnPlay.onclick = () => {
+    if (sourceNode) sourceNode.stop();
+
+    sourceNode = audioContext.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(pitchShifter);
+    pitchShifter.connect(audioContext.destination);
+
+    sourceNode.start();
+    videoEl.currentTime = 0;
+    videoEl.play();
+
+    btnStop.disabled = false;
+  };
+
+  btnStop.onclick = () => {
+    videoEl.pause();
+    if (sourceNode) sourceNode.stop();
+    btnStop.disabled = true;
+  };
+
+  // 動画と音声を同期させる簡易処理
+  videoEl.onplay = () => {
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+  };
+}
+
+</script>
+</body>
+</html>
